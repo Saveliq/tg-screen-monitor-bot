@@ -66,7 +66,7 @@ elif transport == "grpc":
     stream["grpcSettings"] = {"serviceName": get("path", "").lstrip("/")}
 
 config = {
-    "log": {"loglevel": "warning"},
+    "log": {"loglevel": "info"},
     "inbounds": [
         {
             "port": 1080,
@@ -116,5 +116,6 @@ with open(OUTPUT, "w", encoding="utf-8") as file:
 
 print(
     f"Config written to {OUTPUT} "
-    f"(host={host}:{port}, transport={transport}, security={security})"
+    f"(host={host}:{port}, transport={transport}, security={security}, "
+    f"mode={get('mode', 'auto')}, path={get('path', '/')})"
 )
