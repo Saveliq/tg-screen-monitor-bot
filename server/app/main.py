@@ -5,6 +5,7 @@ import logging
 from contextlib import suppress
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiohttp import web
 
 from .config import load_settings
@@ -22,7 +23,8 @@ async def async_main() -> None:
     state = StateStore(settings.data_dir / "state.json")
     frames = LatestFrameStore(settings.data_dir)
 
-    bot = Bot(token=settings.bot_token)
+    session = AiohttpSession(proxy=settings.proxy_url or None)
+    bot = Bot(token=settings.bot_token, session=session)
     telegram = TelegramService(bot, settings, state, frames)
     dispatcher = Dispatcher()
     dispatcher.include_router(telegram.router)
@@ -35,6 +37,7 @@ async def async_main() -> None:
 
     me = await bot.get_me()
     logger.info("Telegram bot @%s started", me.username)
+    logger.info("Telegram proxy: %s", settings.proxy_url or "disabled")
     logger.info("Upload API listening on http://%s:%s/upload", settings.http_host, settings.http_port)
 
     polling = asyncio.create_task(
