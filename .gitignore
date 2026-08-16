@@ -1,10 +1,13 @@
 .env
+client/.env
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
-state.json
 *.log
+state.json
+latest.jpg
+latest.json
 .DS_Store
 Thumbs.db

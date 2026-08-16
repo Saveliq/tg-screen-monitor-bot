@@ -1,0 +1,44 @@
+services:
+  tg-screen-monitor-bot:
+    build:
+      context: ./server
+    image: tg-screen-monitor-bot:local
+    container_name: tg-screen-monitor-bot
+    restart: unless-stopped
+
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      UPLOAD_TOKEN: ${UPLOAD_TOKEN}
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS}
+      DATA_DIR: /data
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: 8080
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-9500000}
+      OFFLINE_AFTER_SECONDS: ${OFFLINE_AFTER_SECONDS:-30}
+
+    volumes:
+      - screen-monitor-data:/data
+
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  screen-monitor-data:

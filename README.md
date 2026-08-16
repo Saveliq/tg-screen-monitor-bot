@@ -1,58 +1,62 @@
 # Telegram Screen Monitor Bot
 
-Простой Telegram-бот для удалённого просмотра экрана Windows без собственного сервера, домена, reverse proxy или VPN.
+Система для удалённого просмотра скриншотов Windows через Telegram.
 
-Бот запускается **на Windows-компьютере, экран которого нужно показывать**. Он делает скриншот через `mss` и каждые N секунд обновляет одно Telegram-сообщение у разрешённого пользователя.
+Архитектура разделена на две независимые части:
+
+```text
+Windows PC                          Linux / Portainer
+┌────────────────────┐             ┌──────────────────────────┐
+│ client/client.py   │             │ tg-screen-monitor-bot    │
+│                    │ POST /upload│                          │
+│ mss -> screenshot  ├────────────►│ HTTP receiver            │
+│ Pillow -> JPEG     │             │ + Telegram bot           │
+└────────────────────┘             └────────────┬─────────────┘
+                                               │
+                                               ▼
+                                         Telegram chat
+                                         [Live screen]
+```
+
+Windows-клиент **не содержит BOT_TOKEN и не общается с Telegram**. Он только делает скриншот и отправляет JPEG на Linux-сервер. Linux-сервис принимает кадр, сохраняет `latest.jpg` и обновляет одно сообщение `Live screen` в Telegram.
 
 > Используйте только на компьютерах, которыми вы владеете или на мониторинг которых у вас есть явное разрешение.
 
 ## Возможности
 
-- захват одного монитора или всех мониторов сразу;
-- JPEG с регулируемым качеством, включая 4K без уменьшения;
-- обновление одного сообщения вместо спама новыми сообщениями;
-- доступ только по Telegram user ID;
-- несколько разрешённых пользователей;
-- восстановление `message_id` после перезапуска через локальный `state.json`;
-- команды `/start`, `/screen`, `/status`, `/stop`;
-- автоматическое восстановление после временных сетевых ошибок;
-- никаких входящих портов и публичного web-сервера.
+- Windows-клиент запускается один раз и работает постоянно;
+- скриншот по умолчанию каждые 10 секунд;
+- один монитор или все мониторы;
+- JPEG до качества 95 без принудительного уменьшения;
+- автоматическая адаптация слишком больших изображений под ограничения Telegram;
+- Linux-сервер разворачивается одним Stack в Portainer;
+- Telegram-бот работает на Linux 24/7;
+- `/start` включает просмотр;
+- `/stop` останавливает обновление конкретному зрителю;
+- `/screen` показывает последний сохранённый кадр;
+- `/status` показывает online/offline Windows-клиента;
+- несколько разрешённых Telegram-пользователей;
+- состояние и последний JPEG переживают перезапуск контейнера;
+- новые кадры заменяют картинку в одном Telegram-сообщении, а не спамят чат.
 
-## Как это работает
+# 1. Создать Telegram-бота
 
-```text
-Windows PC
-   │
-   ├─ mss -> screenshot
-   ├─ Pillow -> JPEG
-   │
-   └─ Telegram Bot API (HTTPS)
-                │
-                ▼
-          Telegram chat
-          [Live screen]
-          сообщение обновляется
-          каждые 10 секунд
-```
+В Telegram откройте `@BotFather`:
 
-## 1. Создание Telegram-бота
+1. `/newbot`
+2. задайте имя;
+3. задайте username;
+4. сохраните полученный `BOT_TOKEN`.
 
-1. Откройте `@BotFather` в Telegram.
-2. Выполните `/newbot`.
-3. Задайте имя и username.
-4. Скопируйте полученный bot token.
-
-Токен выглядит примерно так:
+Пример:
 
 ```text
-1234567890:AA...
+1234567890:AAExampleToken
 ```
 
-Никому его не отправляйте и не коммитьте `.env` в Git.
+## Узнать Telegram user ID
 
-## 2. Узнать Telegram user ID зрителя
-
-Самый простой способ — написать боту вроде `@userinfobot` и посмотреть свой числовой `Id`.
+Нужен числовой ID человека, который будет смотреть скриншоты. Его можно узнать, например, через `@userinfobot`.
 
 Пример:
 
@@ -60,156 +64,162 @@ Windows PC
 123456789
 ```
 
-Именно этот ID нужно поместить в `ALLOWED_USER_IDS`. Бот отклоняет команды от остальных пользователей.
+Несколько зрителей можно указать через запятую:
 
-## 3. Установка на Windows
+```text
+123456789,987654321
+```
 
-Установите Python 3.11+ и в PowerShell выполните:
+# 2. Сгенерировать UPLOAD_TOKEN
+
+Это отдельный секрет между Windows-клиентом и Linux-сервером.
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Один и тот же `UPLOAD_TOKEN` должен быть установлен на сервере и Windows-клиенте.
+
+# 3. Развернуть Linux-сервер через Portainer
+
+Репозиторий:
+
+```text
+https://github.com/Saveliq/tg-screen-monitor-bot
+```
+
+В Portainer:
+
+1. **Stacks** → **Add stack**.
+2. Выберите **Repository / Git repository**.
+3. Repository URL: `https://github.com/Saveliq/tg-screen-monitor-bot`.
+4. Compose path: `docker-compose.yml`.
+5. Добавьте Environment variables:
+
+```text
+BOT_TOKEN=токен_от_BotFather
+UPLOAD_TOKEN=длинный_случайный_секрет
+ALLOWED_USER_IDS=123456789
+HTTP_PORT=8080
+MAX_UPLOAD_BYTES=9500000
+OFFLINE_AFTER_SECONDS=30
+```
+
+6. Нажмите **Deploy the stack**.
+
+Portainer соберёт Docker image из `server/Dockerfile` и создаст named volume `screen-monitor-data`.
+
+В volume хранятся:
+
+```text
+/data/latest.jpg
+/data/latest.json
+/data/state.json
+```
+
+# 4. Проверить Linux-сервер
+
+После запуска:
+
+```text
+http://IP_СЕРВЕРА:8080/healthz
+```
+
+Нормальный ответ до первого кадра:
+
+```json
+{"ok": true, "has_frame": false, "last_frame_at": null, "viewers": 0}
+```
+
+Загрузка выполняется через:
+
+```text
+POST /upload
+Authorization: Bearer UPLOAD_TOKEN
+Content-Type: image/jpeg
+```
+
+Windows должен иметь сетевой доступ к серверу. Если `/upload` доступен через интернет, используйте HTTPS или VPN: обычный HTTP не шифрует скриншоты.
+
+# 5. Установить Windows-клиент
 
 ```powershell
 git clone https://github.com/Saveliq/tg-screen-monitor-bot.git
-cd tg-screen-monitor-bot
-
+cd tg-screen-monitor-bot\client
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-## 4. Настройка
-
-Скопируйте `.env.example` в `.env`:
-
-```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-Пример `.env`:
+Пример `client/.env`:
 
 ```dotenv
-BOT_TOKEN=1234567890:YOUR_TOKEN
-ALLOWED_USER_IDS=123456789
+SERVER_URL=http://192.168.1.50:8080
+UPLOAD_TOKEN=тот_же_секрет_что_в_Portainer
 SCREEN_INTERVAL=10
 SCREEN_MONITOR=0
-SCREEN_JPEG_QUALITY=92
-SCREEN_MAX_WIDTH=0
-STATE_FILE=state.json
-```
-
-### Параметры
-
-`BOT_TOKEN` — токен от BotFather.
-
-`ALLOWED_USER_IDS` — числовые Telegram user ID, которым разрешён просмотр. Несколько ID:
-
-```dotenv
-ALLOWED_USER_IDS=123456789,987654321
-```
-
-`SCREEN_INTERVAL` — интервал обновления в секундах. По умолчанию `10`, минимум `3`.
-
-`SCREEN_MONITOR`:
-
-- `0` — все мониторы как один общий скриншот;
-- `1` — первый монитор;
-- `2` — второй монитор и т.д.
-
-`SCREEN_JPEG_QUALITY` — качество JPEG от 30 до 95. Для текста рекомендуется `90-95`.
-
-`SCREEN_MAX_WIDTH`:
-
-- `0` — не уменьшать картинку;
-- `2560` — уменьшать только если ширина больше 2560 px;
-- `1920` — экономный режим.
-
-Для максимального качества:
-
-```dotenv
 SCREEN_JPEG_QUALITY=95
 SCREEN_MAX_WIDTH=0
+REQUEST_TIMEOUT=30
 ```
 
-## 5. Запуск
+`SCREEN_MONITOR`: `0` — все мониторы, `1` — первый, `2` — второй.
+
+`SCREEN_MAX_WIDTH=0` отключает предварительное уменьшение разрешения.
+
+# 6. Запустить Windows-клиент
 
 ```powershell
-.\.venv\Scripts\python.exe .\run.py
+.\.venv\Scripts\python.exe .\client.py
 ```
 
-В консоли появится примерно:
+Клиент запускается один раз и работает постоянно. При временной ошибке сети процесс не завершается, а продолжает следующие попытки.
 
-```text
-Started @your_bot; monitors=2; interval=10s
-```
+# 7. Включить просмотр в Telegram
 
-Теперь разрешённый пользователь открывает бота и нажимает **Start** или пишет:
+Разрешённый пользователь пишет боту:
 
 ```text
 /start
 ```
 
-Бот отправит сообщение `Live screen`. Дальше именно это сообщение будет обновляться.
+После появления кадра бот создаёт `Live screen`. Каждый следующий upload заменяет фотографию в том же сообщении.
 
-## Команды
+Команды:
 
-- `/start` — включить просмотр в текущем чате;
-- `/screen` — немедленно обновить скриншот;
-- `/status` — состояние клиента;
-- `/stop` — перестать автоматически обновлять экран в этом чате.
+- `/start` — включить автоматические обновления;
+- `/stop` — выключить их для текущего чата;
+- `/screen` — показать последний сохранённый кадр;
+- `/status` — online/offline клиента, возраст, размер и разрешение последнего кадра.
 
-## Автозапуск Windows
+# 8. Автозапуск Windows
 
-Захват экрана должен выполняться в интерактивной пользовательской сессии Windows. Поэтому используйте **Task Scheduler** с `Run only when user is logged on`, а не Windows Service под Session 0.
+Используйте Windows Task Scheduler и **Run only when user is logged on**, потому что захват desktop должен выполняться в интерактивной пользовательской сессии.
 
-Создайте задачу:
-
-- Trigger: `At log on`;
-- Program:
+Program:
 
 ```text
-C:\path\to\tg-screen-monitor-bot\.venv\Scripts\pythonw.exe
+C:\ScreenMonitor\client\.venv\Scripts\pythonw.exe
 ```
 
-- Arguments:
+Arguments:
 
 ```text
-C:\path\to\tg-screen-monitor-bot\run.py
+C:\ScreenMonitor\client\client.py
 ```
 
-- Start in:
+Start in:
 
 ```text
-C:\path\to\tg-screen-monitor-bot
+C:\ScreenMonitor\client
 ```
 
-`pythonw.exe` запускает приложение без постоянно открытого консольного окна.
+Для первичной диагностики запускайте через `python.exe`, чтобы видеть логи.
 
-Для первичной настройки сначала запускайте через `python.exe`, чтобы видеть ошибки в терминале.
+# Безопасность
 
-## Безопасность
+На Windows хранится только `SERVER_URL` и `UPLOAD_TOKEN`. `BOT_TOKEN` находится только на Linux. Доступ в Telegram ограничен `ALLOWED_USER_IDS`.
 
-- `.env` добавлен в `.gitignore`;
-- доступ ограничивается `ALLOWED_USER_IDS`;
-- соединение с Telegram идёт по HTTPS;
-- входящие порты на Windows или Linux не требуются;
-- bot token даёт полный контроль над ботом — при утечке перевыпустите его через BotFather.
-
-Важно: человек с доступом к Windows-профилю, где лежит `.env`, сможет прочитать bot token. Это обычная модель локального секрета для небольшого персонального приложения.
-
-## Проверка
-
-Быстрая проверка синтаксиса:
-
-```powershell
-.\.venv\Scripts\python.exe -m compileall bot run.py
-```
-
-Тесты:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install pytest
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-## Почему без Docker
-
-Контейнер Docker на Windows обычно не имеет прямого доступа к интерактивному пользовательскому desktop session. Для честного захвата экрана этот проект намеренно запускается как обычный Windows Python-процесс.
+`.env` файлы исключены из Git.
