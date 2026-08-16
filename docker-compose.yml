@@ -1,4 +1,29 @@
 services:
+  xray-config:
+    build:
+      context: ./xray
+    image: tg-screen-monitor-xray-config:local
+    environment:
+      VLESS_URL: ${VLESS_URL}
+      OUTPUT_PATH: /xray-config/config.json
+    volumes:
+      - xray-config:/xray-config
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  proxy:
+    image: teddysun/xray:latest
+    container_name: tg-screen-monitor-xray
+    restart: unless-stopped
+    volumes:
+      - xray-config:/etc/xray
+    depends_on:
+      xray-config:
+        condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
+
   tg-screen-monitor-bot:
     build:
       context: ./server
@@ -18,6 +43,7 @@ services:
       HTTP_PORT: 8080
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-9500000}
       OFFLINE_AFTER_SECONDS: ${OFFLINE_AFTER_SECONDS:-30}
+      PROXY_URL: socks5://proxy:1080
 
     volumes:
       - screen-monitor-data:/data
@@ -29,6 +55,10 @@ services:
     security_opt:
       - no-new-privileges:true
 
+    depends_on:
+      proxy:
+        condition: service_started
+
     healthcheck:
       test:
         - CMD
@@ -38,7 +68,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
 volumes:
   screen-monitor-data:
+  xray-config:
