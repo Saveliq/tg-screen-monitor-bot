@@ -1,88 +1,88 @@
 # Telegram Screen Monitor Bot
 
-Система для удалённого просмотра скриншотов Windows через Telegram.
+Система для просмотра скриншотов Windows через Telegram.
 
-Архитектура разделена на две независимые части:
+Архитектура:
 
 ```text
-Windows PC                          Linux / Portainer
-┌────────────────────┐             ┌──────────────────────────┐
-│ client/client.py   │             │ tg-screen-monitor-bot    │
-│                    │ POST /upload│                          │
-│ mss -> screenshot  ├────────────►│ HTTP receiver            │
-│ Pillow -> JPEG     │             │ + Telegram bot           │
-└────────────────────┘             └────────────┬─────────────┘
-                                               │
-                                               ▼
-                                         Telegram chat
-                                         [Live screen]
+Windows PC
+  client/client.py
+       |
+       | POST /upload + Bearer UPLOAD_TOKEN
+       v
+Linux / Portainer
+  tg-screen-monitor-bot ---- SOCKS5 ----> Xray ---- VLESS ----> Telegram API
+       |
+       +--> /data/latest.jpg
+       +--> Telegram Live screen
 ```
 
-Windows-клиент **не содержит BOT_TOKEN и не общается с Telegram**. Он только делает скриншот и отправляет JPEG на Linux-сервер. Linux-сервис принимает кадр, сохраняет `latest.jpg` и обновляет одно сообщение `Live screen` в Telegram.
+Windows-клиент не знает `BOT_TOKEN` и не подключается к Telegram. Он только делает скриншоты и отправляет JPEG на Linux. На Linux постоянно работают HTTP receiver и Telegram-бот. Для доступа Linux-сервера к Telegram используется Xray/VLESS, по той же схеме, что в `Saveliq/tg-voice-journal-bot`.
 
-> Используйте только на компьютерах, которыми вы владеете или на мониторинг которых у вас есть явное разрешение.
+> Используйте только на компьютерах, которыми вы владеете или на мониторинг которых у вас есть разрешение.
 
-## Возможности
+## Что умеет
 
 - Windows-клиент запускается один раз и работает постоянно;
-- скриншот по умолчанию каждые 10 секунд;
-- один монитор или все мониторы;
-- JPEG до качества 95 без принудительного уменьшения;
-- автоматическая адаптация слишком больших изображений под ограничения Telegram;
-- Linux-сервер разворачивается одним Stack в Portainer;
-- Telegram-бот работает на Linux 24/7;
-- `/start` включает просмотр;
-- `/stop` останавливает обновление конкретному зрителю;
-- `/screen` показывает последний сохранённый кадр;
-- `/status` показывает online/offline Windows-клиента;
-- несколько разрешённых Telegram-пользователей;
-- состояние и последний JPEG переживают перезапуск контейнера;
-- новые кадры заменяют картинку в одном Telegram-сообщении, а не спамят чат.
+- делает скриншот всех мониторов или выбранного монитора;
+- регулируемые JPEG quality и максимальная ширина;
+- повторяет отправку после сетевых ошибок;
+- Linux разворачивается одним Stack в Portainer;
+- `xray-config` генерирует Xray-конфиг из `VLESS_URL`;
+- `proxy` поднимает SOCKS5 на `proxy:1080`;
+- Telegram-бот ходит к Telegram API только через `socks5://proxy:1080`;
+- каждый новый кадр заменяет фотографию в одном сообщении `Live screen`;
+- `/start`, `/stop`, `/screen`, `/status`;
+- разрешённые Telegram users задаются через `ALLOWED_USER_IDS`;
+- последний кадр и state сохраняются в Docker volume.
 
-# 1. Создать Telegram-бота
+## 1. Создать Telegram-бота
 
-В Telegram откройте `@BotFather`:
-
-1. `/newbot`
-2. задайте имя;
-3. задайте username;
-4. сохраните полученный `BOT_TOKEN`.
-
-Пример:
+В `@BotFather` выполните `/newbot` и сохраните токен:
 
 ```text
-1234567890:AAExampleToken
+BOT_TOKEN=1234567890:AA...
 ```
 
-## Узнать Telegram user ID
+## 2. Узнать Telegram user ID
 
-Нужен числовой ID человека, который будет смотреть скриншоты. Его можно узнать, например, через `@userinfobot`.
-
-Пример:
+Нужен числовой ID зрителя. Например:
 
 ```text
 123456789
 ```
 
-Несколько зрителей можно указать через запятую:
+Несколько пользователей:
 
 ```text
 123456789,987654321
 ```
 
-# 2. Сгенерировать UPLOAD_TOKEN
+## 3. Создать UPLOAD_TOKEN
 
-Это отдельный секрет между Windows-клиентом и Linux-сервером.
+Это отдельный секрет между Windows и Linux.
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Один и тот же `UPLOAD_TOKEN` должен быть установлен на сервере и Windows-клиенте.
+Один и тот же токен указывается в Portainer и `client/.env`.
 
-# 3. Развернуть Linux-сервер через Portainer
+## 4. Подготовить VLESS_URL
 
-Репозиторий:
+Используйте рабочую VLESS-ссылку, которую вы уже применяете для Xray. Поддерживаются используемые генератором варианты `tcp`, `ws`, `grpc`, `xhttp`, а также `tls` и `reality`.
+
+Пример формата:
+
+```text
+vless://UUID@host.example:443?security=reality&type=tcp&sni=example.com&fp=chrome&pbk=PUBLIC_KEY&sid=SHORT_ID#screen-bot
+```
+
+Не коммитьте настоящую VLESS URL в GitHub.
+
+## 5. Развернуть Stack в Portainer
+
+Repository:
 
 ```text
 https://github.com/Saveliq/tg-screen-monitor-bot
@@ -100,6 +100,7 @@ https://github.com/Saveliq/tg-screen-monitor-bot
 BOT_TOKEN=токен_от_BotFather
 UPLOAD_TOKEN=длинный_случайный_секрет
 ALLOWED_USER_IDS=123456789
+VLESS_URL=ваша_полная_vless_ссылка
 HTTP_PORT=8080
 MAX_UPLOAD_BYTES=9500000
 OFFLINE_AFTER_SECONDS=30
@@ -107,48 +108,76 @@ OFFLINE_AFTER_SECONDS=30
 
 6. Нажмите **Deploy the stack**.
 
-Portainer соберёт Docker image из `server/Dockerfile` и создаст named volume `screen-monitor-data`.
-
-В volume хранятся:
+Stack создаёт три сервиса:
 
 ```text
-/data/latest.jpg
-/data/latest.json
-/data/state.json
+xray-config
+proxy
+tg-screen-monitor-bot
 ```
 
-# 4. Проверить Linux-сервер
+### Что делает каждый контейнер
 
-После запуска:
+`xray-config` — одноразовый init-контейнер. Читает `VLESS_URL`, создаёт `/xray-config/config.json` и завершается с кодом 0.
+
+`proxy` — `teddysun/xray:latest`. Читает созданный config и поднимает SOCKS5 внутри Docker-сети на `proxy:1080`.
+
+`tg-screen-monitor-bot` — принимает screenshots на `/upload` и запускает aiogram polling. Compose автоматически задаёт ему:
 
 ```text
-http://IP_СЕРВЕРА:8080/healthz
+PROXY_URL=socks5://proxy:1080
 ```
 
-Нормальный ответ до первого кадра:
+Поэтому bot token/API запросы к Telegram проходят через Xray. Внешне порт SOCKS5 не публикуется.
+
+## 6. Проверить сервер
+
+После старта откройте:
+
+```text
+http://SERVER_IP:8080/healthz
+```
+
+До первого кадра ожидается примерно:
 
 ```json
 {"ok": true, "has_frame": false, "last_frame_at": null, "viewers": 0}
 ```
 
-Загрузка выполняется через:
+В Portainer проверьте контейнеры:
 
 ```text
-POST /upload
-Authorization: Bearer UPLOAD_TOKEN
-Content-Type: image/jpeg
+xray-config             exited (0)
+proxy                   running
+tg-screen-monitor-bot   running / healthy
 ```
 
-Windows должен иметь сетевой доступ к серверу. Если `/upload` доступен через интернет, используйте HTTPS или VPN: обычный HTTP не шифрует скриншоты.
+В логах `xray-config` должно быть сообщение вида:
 
-# 5. Установить Windows-клиент
+```text
+Config written to /xray-config/config.json (...)
+```
+
+В логах бота:
+
+```text
+Telegram proxy: socks5://proxy:1080
+Telegram bot @your_bot started
+Upload API listening on http://0.0.0.0:8080/upload
+```
+
+Если `xray-config` завершается с ошибкой, в первую очередь проверьте `VLESS_URL`.
+
+## 7. Windows-клиент
 
 ```powershell
 git clone https://github.com/Saveliq/tg-screen-monitor-bot.git
 cd tg-screen-monitor-bot\client
+
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
 Copy-Item .env.example .env
 notepad .env
 ```
@@ -157,7 +186,7 @@ notepad .env
 
 ```dotenv
 SERVER_URL=http://192.168.1.50:8080
-UPLOAD_TOKEN=тот_же_секрет_что_в_Portainer
+UPLOAD_TOKEN=ТОТ_ЖЕ_TOKEN_ЧТО_В_PORTAINER
 SCREEN_INTERVAL=10
 SCREEN_MONITOR=0
 SCREEN_JPEG_QUALITY=95
@@ -165,19 +194,25 @@ SCREEN_MAX_WIDTH=0
 REQUEST_TIMEOUT=30
 ```
 
-`SCREEN_MONITOR`: `0` — все мониторы, `1` — первый, `2` — второй.
+`SCREEN_MONITOR=0` — все мониторы. `1` — первый, `2` — второй и т.д.
 
-`SCREEN_MAX_WIDTH=0` отключает предварительное уменьшение разрешения.
+`SCREEN_MAX_WIDTH=0` — не уменьшать разрешение заранее.
 
-# 6. Запустить Windows-клиент
+Запуск:
 
 ```powershell
 .\.venv\Scripts\python.exe .\client.py
 ```
 
-Клиент запускается один раз и работает постоянно. При временной ошибке сети процесс не завершается, а продолжает следующие попытки.
+Клиент один раз запускается и дальше постоянно выполняет:
 
-# 7. Включить просмотр в Telegram
+```text
+capture -> JPEG -> POST /upload -> sleep -> repeat
+```
+
+При временной ошибке сети процесс не завершается.
+
+## 8. Telegram
 
 Разрешённый пользователь пишет боту:
 
@@ -185,41 +220,56 @@ REQUEST_TIMEOUT=30
 /start
 ```
 
-После появления кадра бот создаёт `Live screen`. Каждый следующий upload заменяет фотографию в том же сообщении.
+После получения кадра бот создаёт `Live screen`. Следующие uploads обновляют фото в этом же сообщении.
 
 Команды:
 
-- `/start` — включить автоматические обновления;
-- `/stop` — выключить их для текущего чата;
-- `/screen` — показать последний сохранённый кадр;
-- `/status` — online/offline клиента, возраст, размер и разрешение последнего кадра.
+```text
+/start   включить просмотр
+/stop    выключить автообновление для этого чата
+/screen  показать последний сохранённый кадр
+/status  показать состояние Windows-клиента
+```
 
-# 8. Автозапуск Windows
+`/status` считает клиента offline, если новый кадр не приходил дольше `OFFLINE_AFTER_SECONDS`.
 
-Используйте Windows Task Scheduler и **Run only when user is logged on**, потому что захват desktop должен выполняться в интерактивной пользовательской сессии.
+## 9. Проверить upload вручную
+
+PowerShell:
+
+```powershell
+curl.exe `
+  -X POST `
+  -H "Authorization: Bearer ВАШ_UPLOAD_TOKEN" `
+  -H "Content-Type: image/jpeg" `
+  --data-binary "@C:\Temp\test.jpg" `
+  "http://SERVER_IP:8080/upload"
+```
+
+## 10. Автозапуск Windows
+
+Для захвата desktop используйте Task Scheduler с **Run only when user is logged on**.
 
 Program:
 
 ```text
-C:\ScreenMonitor\client\.venv\Scripts\pythonw.exe
+C:\path\to\tg-screen-monitor-bot\client\.venv\Scripts\python.exe
 ```
 
 Arguments:
 
 ```text
-C:\ScreenMonitor\client\client.py
+C:\path\to\tg-screen-monitor-bot\client\client.py
 ```
 
 Start in:
 
 ```text
-C:\ScreenMonitor\client
+C:\path\to\tg-screen-monitor-bot\client
 ```
 
-Для первичной диагностики запускайте через `python.exe`, чтобы видеть логи.
+## Безопасность
 
-# Безопасность
+`UPLOAD_TOKEN`, `BOT_TOKEN` и `VLESS_URL` являются секретами. Храните их в Environment variables Portainer/локальном `.env`, а не в Git.
 
-На Windows хранится только `SERVER_URL` и `UPLOAD_TOKEN`. `BOT_TOKEN` находится только на Linux. Доступ в Telegram ограничен `ALLOWED_USER_IDS`.
-
-`.env` файлы исключены из Git.
+Если Windows отправляет screenshots через публичный интернет напрямую на `http://SERVER_IP:8080`, содержимое screenshot и upload token не шифруются транспортом. Для публичного маршрута используйте HTTPS или VPN. Xray в этом Stack защищает/обеспечивает именно исходящий доступ Linux-бота к Telegram, а не Windows → `/upload`.
