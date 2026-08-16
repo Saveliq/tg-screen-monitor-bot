@@ -2,7 +2,7 @@ services:
   xray-config:
     build:
       context: ./xray
-    image: tg-screen-monitor-xray-config:local
+    image: tg-screen-monitor-xray-config:proxy-v2
     environment:
       VLESS_URL: ${VLESS_URL}
       OUTPUT_PATH: /xray-config/config.json
@@ -27,7 +27,7 @@ services:
   tg-screen-monitor-bot:
     build:
       context: ./server
-    image: tg-screen-monitor-bot:local
+    image: tg-screen-monitor-bot:proxy-v2
     container_name: tg-screen-monitor-bot
     restart: unless-stopped
 
