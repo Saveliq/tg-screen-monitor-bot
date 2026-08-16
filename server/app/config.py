@@ -15,6 +15,7 @@ class Settings:
     http_port: int
     max_upload_bytes: int
     offline_after_seconds: int
+    proxy_url: str
 
 
 def parse_user_ids(raw: str) -> frozenset[int]:
@@ -65,4 +66,5 @@ def load_settings() -> Settings:
         http_port=_positive_int("HTTP_PORT", 8080),
         max_upload_bytes=_positive_int("MAX_UPLOAD_BYTES", 9_500_000),
         offline_after_seconds=_positive_int("OFFLINE_AFTER_SECONDS", 30),
+        proxy_url=os.getenv("PROXY_URL", "").strip(),
     )
