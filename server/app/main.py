@@ -6,6 +6,7 @@ from contextlib import suppress
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramNetworkError
 from aiohttp import web
 
 from .config import load_settings
@@ -15,6 +16,21 @@ from .storage import LatestFrameStore
 from .telegram_service import TelegramService
 
 logger = logging.getLogger("screenbot")
+
+
+async def wait_for_telegram(bot: Bot) -> None:
+    while True:
+        try:
+            me = await bot.get_me()
+            logger.info("Telegram bot @%s connected", me.username)
+            return
+        except TelegramNetworkError as exc:
+            logger.error(
+                "Telegram is unreachable through the configured proxy: %s. "
+                "Retrying in 10 seconds...",
+                exc,
+            )
+            await asyncio.sleep(10)
 
 
 async def async_main() -> None:
@@ -35,27 +51,32 @@ async def async_main() -> None:
     site = web.TCPSite(runner, settings.http_host, settings.http_port)
     await site.start()
 
-    me = await bot.get_me()
-    logger.info("Telegram bot @%s started", me.username)
     logger.info("Telegram proxy: %s", settings.proxy_url or "disabled")
     logger.info("Upload API listening on http://%s:%s/upload", settings.http_host, settings.http_port)
 
-    polling = asyncio.create_task(
-        dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types()),
-        name="telegram-polling",
-    )
     try:
-        await polling
-    finally:
-        polling.cancel()
-        with suppress(asyncio.CancelledError):
+        await wait_for_telegram(bot)
+
+        polling = asyncio.create_task(
+            dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types()),
+            name="telegram-polling",
+        )
+        try:
             await polling
+        finally:
+            polling.cancel()
+            with suppress(asyncio.CancelledError):
+                await polling
+    finally:
         await runner.cleanup()
         await bot.session.close()
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:
