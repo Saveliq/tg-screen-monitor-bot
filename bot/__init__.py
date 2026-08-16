@@ -1,0 +1,1 @@
+"""Telegram screen monitor bot."""
